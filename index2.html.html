@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI面接官システム - ファイナンシャルテクノロジーシステム株式会社</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- html2pdf.js for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans JP', sans-serif; background-color: #f3f4f6; }
+        .chat-container { max-height: 60vh; overflow-y: auto; }
+        .message-ai { background-color: #ebf8fa; border-left: 4px solid #00acc1; }
+        .message-user { background-color: #ffffff; border-right: 4px solid #4ade80; }
+        .hidden { display: none !important; }
+        #videoElement { width: 100%; max-height: 200px; object-fit: cover; background-color: #000; border-radius: 0.5rem; }
+        .tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; font-weight: bold; }
+        .tab-inactive { color: #6b7280; }
+    </style>
+</head>
+<body class="text-gray-800 h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-blue-900 text-white p-4 shadow-md flex justify-between items-center">
+        <h1 class="text-xl font-bold">ファイナンシャルテクノロジーシステム(株) AI面接室</h1>
+        <div id="statusIndicator" class="flex items-center text-sm">
+            <span class="w-3 h-3 rounded-full bg-gray-400 mr-2" id="statusDot"></span>
+            <span id="statusText">待機中</span>
+        </div>
+    </header>
+
+    <main class="flex-grow flex p-4 gap-4 overflow-hidden h-full">
+        <!-- Left Column: Camera & Controls -->
+        <div class="w-1/3 flex flex-col gap-4">
+            <!-- Setup & Permissions -->
+            <div id="setupSection" class="bg-white p-6 rounded-lg shadow-md flex-grow flex flex-col justify-center">
+                <h2 class="text-lg font-bold mb-4 border-b pb-2">面接の準備</h2>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">お名前（フルネーム） <span class="text-red-500">*</span></label>
+                    <input type="text" id="candidateName" class="w-full border rounded p-2" placeholder="例：川上 大典">
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">生年月日 <span class="text-red-500">*</span></label>
+                    <input type="date" id="candidateDob" class="w-full border rounded p-2">
+                </div>
+                
+                <div class="mb-6 p-4 bg-yellow-50 rounded text-sm border border-yellow-200">
+                    <p class="font-bold mb-2">【同意事項】</p>
+                    <p class="mb-2">本システムはAIを用いた面接を行います。表情や身だしなみを含めた総合的な評価を行うため、カメラおよびマイクを使用し、面接の様子を録画・分析します。</p>
+                    <label class="flex items-start cursor-pointer">
+                        <input type="checkbox" id="consentCheck" class="mt-1 mr-2">
+                        <span>カメラ・マイクの利用と、面接内容の録画・AI分析に同意します。</span>
+                    </label>
+                </div>
+                
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">Gemini APIキー <span class="text-red-500">*</span></label>
+                    <input type="password" id="apiKey" class="w-full border rounded p-2 text-sm" placeholder="AIの起動に必要です">
+                </div>
+
+                <button id="startBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded w-full disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    カメラを起動して面接を開始
+                </button>
+            </div>
+
+            <!-- Active Interview Controls (Hidden initially) -->
+            <div id="activeControlsSection" class="bg-white p-4 rounded-lg shadow-md flex flex-col gap-4 hidden">
+                <div class="relative">
+                    <video id="videoElement" autoplay muted playsinline></video>
+                    <div class="absolute top-2 right-2 bg-red-600 text-white text-xs px-2 py-1 rounded animate-pulse">REC</div>
+                </div>
+                
+                <div class="flex-grow flex flex-col justify-center gap-2">
+                    <button id="micBtn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded flex items-center justify-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                        <span>音声で話す（長押し）</span>
+                    </button>
+                    <p class="text-xs text-center text-gray-500">または右側のチャットで入力</p>
+                </div>
+
+                <button id="endBtn" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded border-t mt-auto">
+                    面接を終了して結果を見る
+                </button>
+            </div>
+        </div>
+
+        <!-- Right Column: Chat & Evaluation -->
+        <div class="w-2/3 bg-white rounded-lg shadow-md flex flex-col relative">
+            <!-- Chat Interface -->
+            <div id="chatInterface" class="flex flex-col h-full">
+                <div class="p-4 border-b bg-gray-50">
+                    <h2 class="font-bold text-lg">面接チャット</h2>
+                    <p class="text-xs text-gray-500" id="timerDisplay">経過時間: 0分</p>
+                </div>
+                <div id="chatBox" class="flex-grow p-4 chat-container flex flex-col gap-3">
+                    <div class="text-center text-sm text-gray-400 my-4">ここに面接の会話が表示されます</div>
+                </div>
+                <!-- Text Input -->
+                <div class="p-4 border-t flex gap-2">
+                    <input type="text" id="textInput" class="flex-grow border rounded px-3 py-2" placeholder="テキストで回答する場合はこちらに入力..." disabled>
+                    <button id="sendTextBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:opacity-50" disabled>送信</button>
+                </div>
+            </div>
+
+            <!-- Loading Overlay for Evaluation -->
+            <div id="evalLoading" class="absolute inset-0 bg-white/90 z-10 flex flex-col items-center justify-center hidden">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+                <p class="text-lg font-bold text-blue-900">面接データを分析中...</p>
+                <p class="text-sm text-gray-500 mt-2">録画データ、表情、会話内容から評価シートを作成しています。</p>
+            </div>
+
+            <!-- Evaluation Interface (Hidden initially) -->
+            <div id="evalInterface" class="flex flex-col h-full hidden">
+                <div class="flex border-b bg-gray-50 justify-between items-center pr-4">
+                    <div class="flex">
+                        <button id="tabCandidate" class="px-6 py-4 tab-active font-medium">求職者向けフィードバック</button>
+                        <button id="tabInternal" class="px-6 py-4 tab-inactive font-medium flex items-center">
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8V7a4 4 0 00-8 0v4h8z"></path></svg>
+                            社内用 評価シート
+                        </button>
+                    </div>
+                    <button id="downloadPdfBtn" class="bg-gray-800 hover:bg-gray-700 text-white text-sm px-3 py-1.5 rounded flex items-center">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        PDF保存
+                    </button>
+                </div>
+                
+                <div id="evalContentArea" class="flex-grow p-6 overflow-y-auto bg-white">
+                    <!-- Dynamic Content will be injected here -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Password Modal -->
+    <div id="passwordModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+        <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full">
+            <h3 class="text-lg font-bold mb-4 border-b pb-2">管理者認証</h3>
+            <p class="text-sm text-gray-600 mb-4">社内用評価シートを閲覧するためのパスワードを入力してください。（デモ用: admin）</p>
+            <input type="password" id="adminPassword" class="w-full border rounded p-2 mb-4" placeholder="パスワード">
+            <div class="flex justify-end gap-2">
+                <button id="cancelPwdBtn" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">キャンセル</button>
+                <button id="submitPwdBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">認証</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 状態管理 ---
+        let chatHistory = [];
+        let isRecording = false;
+        let mediaRecorder;
+        let recordedChunks = [];
+        let currentTab = 'candidate';
+        let evaluationData = null;
+        let interviewStartTime = null;
+        let timerInterval = null;
+
+        // --- DOM Elements ---
+        const els = {
+            name: document.getElementById('candidateName'),
+            dob: document.getElementById('candidateDob'),
+            consent: document.getElementById('consentCheck'),
+            apiKey: document.getElementById('apiKey'),
+            startBtn: document.getElementById('startBtn'),
+            endBtn: document.getElementById('endBtn'),
+            setupSection: document.getElementById('setupSection'),
+            activeControls: document.getElementById('activeControlsSection'),
+            chatBox: document.getElementById('chatBox'),
+            textInput: document.getElementById('textInput'),
+            sendTextBtn: document.getElementById('sendTextBtn'),
+            micBtn: document.getElementById('micBtn'),
+            video: document.getElementById('videoElement'),
+            chatInterface: document.getElementById('chatInterface'),
+            evalInterface: document.getElementById('evalInterface'),
+            evalLoading: document.getElementById('evalLoading'),
+            evalContentArea: document.getElementById('evalContentArea'),
+            tabCandidate: document.getElementById('tabCandidate'),
+            tabInternal: document.getElementById('tabInternal'),
+            statusDot: document.getElementById('statusDot'),
+            statusText: document.getElementById('statusText'),
+            timerDisplay: document.getElementById('timerDisplay'),
+            pwdModal: document.getElementById('passwordModal'),
+            pwdInput: document.getElementById('adminPassword'),
+            cancelPwdBtn: document.getElementById('cancelPwdBtn'),
+            submitPwdBtn: document.getElementById('submitPwdBtn'),
+            downloadPdfBtn: document.getElementById('downloadPdfBtn')
+        };
+
+        // --- 入力監視 (Startボタンの有効化) ---
+        const checkInputs = () => {
+            els.startBtn.disabled = !(els.name.value.trim() && els.dob.value && els.consent.checked && els.apiKey.value.trim());
+        };
+        els.name.addEventListener('input', checkInputs);
+        els.dob.addEventListener('change', checkInputs);
+        els.consent.addEventListener('change', checkInputs);
+        els.apiKey.addEventListener('input', checkInputs);
+
+        // --- カメラセットアップ ---
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                els.video.srcObject = stream;
+                
+                // 録画設定
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = (e) => { if(e.data.size > 0) recordedChunks.push(e.data); };
+                mediaRecorder.start();
+                
+                return stream;
+            } catch (err) {
+                alert('カメラまたはマイクへのアクセスが拒否されました。設定を確認してください。');
+                return null;
+            }
+        }
+
+        // --- カメラから画像をキャプチャ ---
+        function captureImage() {
+            const canvas = document.createElement('canvas');
+            canvas.width = els.video.videoWidth;
+            canvas.height = els.video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
+            // return Base64 string without data url prefix
+            return canvas.toDataURL('image/jpeg', 0.8).split(',')[1]; 
+        }
+
+        // --- 時間管理タイマー ---
+        function updateTimer() {
+            if (!interviewStartTime) return;
+            const now = new Date();
+            const diffMinutes = Math.floor((now - interviewStartTime) / 60000);
+            els.timerDisplay.textContent = `経過時間: ${diffMinutes}分 (目安30分)`;
+        }
+
+        // --- 面接開始 ---
+        els.startBtn.addEventListener('click', async () => {
+            els.startBtn.disabled = true;
+            els.startBtn.textContent = 'カメラを準備中...';
+            
+            const stream = await setupCamera();
+            if(!stream) {
+                els.startBtn.disabled = false;
+                els.startBtn.textContent = 'カメラを起動して面接を開始';
+                return;
+            }
+
+            els.setupSection.classList.add('hidden');
+            els.activeControls.classList.remove('hidden');
+            els.textInput.disabled = false;
+            els.sendTextBtn.disabled = false;
+            
+            els.statusDot.classList.replace('bg-gray-400', 'bg-green-500');
+            els.statusText.textContent = '面接進行中';
+
+            interviewStartTime = new Date();
+            timerInterval = setInterval(updateTimer, 60000); // 1分ごとに更新
+            updateTimer();
+
+            // 最初のシステムプロンプト設定と挨拶の生成
+            addMessageToChat('System', 'AI面接官が接続しています...');
+            
+            const initialGreeting = \`はじめまして、ファイナンシャルテクノロジーシステム株式会社のAI面接官です。本日はお時間をいただきありがとうございます。リラックスして進めていきましょう。まずは、\${els.name.value}さんのこれまでのご経歴を簡単に教えていただけますか？\`;
+            
+            chatHistory.push({ role: 'model', parts: [{ text: initialGreeting }] });
+            els.chatBox.innerHTML = ''; // Clear loading
+            addMessageToChat('AI面接官', initialGreeting, 'message-ai');
+        });
+
+        // --- メッセージの描画 ---
+        function addMessageToChat(sender, text, cssClass = 'bg-gray-200') {
+            const div = document.createElement('div');
+            div.className = \`p-3 rounded-lg shadow-sm text-sm \${cssClass} w-5/6 \${sender === 'あなた' ? 'ml-auto' : 'mr-auto'}\`;
+            div.innerHTML = \`<p class="font-bold mb-1 text-xs opacity-70">\${sender}</p><p class="whitespace-pre-wrap">\${text}</p>\`;
+            els.chatBox.appendChild(div);
+            els.chatBox.scrollTop = els.chatBox.scrollHeight;
+        }
+
+        // --- APIリクエスト (会話用) ---
+        async function sendToGeminiChat(userText, imageBase64) {
+            const apiKey = els.apiKey.value.trim();
+            const elapsedMins = Math.floor((new Date() - interviewStartTime) / 60000);
+            
+            // システムプロンプト（時間管理指示を追加）
+            const systemInstruction = \`あなたは「ファイナンシャルテクノロジーシステム株式会社」の採用面接官です。圧迫面接は厳禁です。
+候補者名：\${els.name.value}、生年月日：\${els.dob.value}
+
+【面接の進行と時間管理について】
+全体で「30分程度」を予定しています。ユーザーのメッセージ末尾に付与される[経過時間]のメタ情報を参考に、自然なペース配分を行ってください。
+・0〜20分頃: 以下の「求める人物像」に関する経験の深掘りを丁寧に行う。
+・20〜25分頃: そろそろまとめに入り、候補者からの逆質問（「最後に弊社の働き方や事業について何か聞いておきたいことはありますか？」等）へ自然に誘導する。
+・25分以降: 疑問点に答えつつ、面接のクロージング（終了ボタンを押すことの案内）へと向かう。
+※急かす発言（「時間が迫っているので」等）は厳禁。候補者が話したい場合は30分をオーバーしてもそのまま丁寧に対応を続けること。
+
+【求める人物像】適宜質問して確認すること。
+1. コミュニケーション能力（対話のキャッチボールができるか）
+2. 挑戦や成長を楽しめるマインド
+3. 仕事も遊びも楽しみたい方（イベント等への前向きさ）
+4. 困難な状況での主体的思考・行動力
+5. 主体的に行動できるか
+6. 進んで自己研鑽できるか（最近学んだ技術など）
+7. IT業界や金融業界への興味
+
+【逆質問への回答データ】
+・事業内容：金融システム開発支援、FinTech/AI自社サービス。
+・社風：風通しが良く意見が通りやすい。2-3年目でリーダーに挑戦する人も多い。2-3ヶ月に1回イベントあり。売上右肩上がり。
+・働き方：9:00〜18:00、残業10〜20h。私服/オフィスカジュアル。残業代全額支給。
+・勤務地/休日：本社（日本橋小網町周辺駅より徒歩5分）または23区内。年間125日休。\`;
+
+            // ユーザーメッセージに経過時間の隠しテキストを付与
+            const hiddenTimeNote = \`\n\n[システム通知: 面接開始から約\${elapsedMins}分経過]\`;
+            const contentParts = [{ text: userText + hiddenTimeNote }];
+            
+            if (imageBase64) {
+                contentParts.push({
+                    inline_data: { mime_type: "image/jpeg", data: imageBase64 }
+                });
+            }
+
+            const currentTurn = { role: 'user', parts: contentParts };
+            const messages = [...chatHistory, currentTurn];
+
+            const response = await fetch(\`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=\${apiKey}\`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    system_instruction: { parts: [{ text: systemInstruction }] },
+                    contents: messages,
+                    generationConfig: { temperature: 0.7 }
+                })
+            });
+
+            if (!response.ok) throw new Error('API Error');
+            const data = await response.json();
+            const aiText = data.candidates[0].content.parts[0].text;
+            
+            // 履歴に保存（履歴には隠しテキストなしの純粋なuserTextを保存）
+            chatHistory.push({ role: 'user', parts: [{ text: userText }] });
+            chatHistory.push({ role: 'model', parts: [{ text: aiText }] });
+            
+            return aiText;
+        }
+
+        // --- メッセージ送信ハンドラ ---
+        async function handleSend() {
+            const text = els.textInput.value.trim();
+            if (!text) return;
+            
+            els.textInput.value = '';
+            els.textInput.disabled = true;
+            els.sendTextBtn.disabled = true;
+            els.micBtn.disabled = true;
+            
+            addMessageToChat('あなた', text, 'message-user');
+            
+            // カメラから表情画像をキャプチャ
+            const imgData = captureImage();
+
+            try {
+                const aiResponse = await sendToGeminiChat(text, imgData);
+                addMessageToChat('AI面接官', aiResponse, 'message-ai');
+            } catch (e) {
+                addMessageToChat('System', '通信エラーが発生しました。', 'bg-red-100 text-red-800');
+            }
+
+            els.textInput.disabled = false;
+            els.sendTextBtn.disabled = false;
+            els.micBtn.disabled = false;
+            els.textInput.focus();
+        }
+
+        els.sendTextBtn.addEventListener('click', handleSend);
+        els.textInput.addEventListener('keypress', (e) => { if(e.key === 'Enter') handleSend(); });
+
+        // --- 音声認識 (Web Speech API) ---
+        let recognition = null;
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.lang = 'ja-JP';
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            
+            let currentSpeech = '';
+            
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        currentSpeech += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                els.textInput.value = currentSpeech + interimTranscript;
+            };
+
+            els.micBtn.addEventListener('mousedown', () => {
+                currentSpeech = '';
+                els.textInput.value = '';
+                els.micBtn.classList.replace('bg-green-600', 'bg-red-600');
+                els.micBtn.innerHTML = '<span class="animate-pulse flex items-center"><span class="w-3 h-3 bg-white rounded-full mr-2"></span>録音中... 放して送信</span>';
+                recognition.start();
+            });
+
+            const stopRec = () => {
+                if (els.micBtn.classList.contains('bg-red-600')) {
+                    recognition.stop();
+                    els.micBtn.classList.replace('bg-red-600', 'bg-green-600');
+                    els.micBtn.innerHTML = '<svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg><span>音声で話す（長押し）</span>';
+                    setTimeout(() => { if(els.textInput.value.trim()) handleSend(); }, 500);
+                }
+            };
+            els.micBtn.addEventListener('mouseup', stopRec);
+            els.micBtn.addEventListener('mouseleave', stopRec);
+        } else {
+            els.micBtn.classList.add('hidden');
+        }
+
+        // --- 面接終了・評価生成 (JSON Schema) ---
+        els.endBtn.addEventListener('click', async () => {
+            if(!confirm('面接を終了し、評価データを生成しますか？')) return;
+            
+            clearInterval(timerInterval);
+            els.statusDot.classList.replace('bg-green-500', 'bg-yellow-500');
+            els.statusText.textContent = '分析・評価中';
+            
+            els.chatInterface.classList.add('hidden');
+            els.evalLoading.classList.remove('hidden');
+            els.activeControls.classList.add('hidden');
+            
+            // カメラ・マイク停止
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+            const tracks = els.video.srcObject.getTracks();
+            tracks.forEach(track => track.stop());
+
+            const apiKey = els.apiKey.value.trim();
+            const transcript = chatHistory.map(m => \`\${m.role === 'model' ? '面接官' : '候補者'}: \${m.parts[0].text}\`).join('\n\n');
+
+            const schema = {
+                type: "OBJECT",
+                properties: {
+                    candidate: {
+                        type: "OBJECT",
+                        properties: {
+                            communicationScore: { type: "INTEGER", description: "100点満点" },
+                            feedbackPositive: { type: "STRING" },
+                            feedbackImprovement: { type: "STRING" }
+                        }
+                    },
+                    internal: {
+                        type: "OBJECT",
+                        properties: {
+                            matchScore: { type: "INTEGER", description: "100点満点" },
+                            overallImpression: { type: "STRING" },
+                            strongPoints: { type: "ARRAY", items: { type: "STRING" } },
+                            weakPoints: { type: "ARRAY", items: { type: "STRING" } },
+                            potentialAndGrowth: { type: "STRING" },
+                            retentionForecast: { type: "STRING" },
+                            appearanceAnalysis: { type: "STRING", description: "会話から推測される表情や態度の所見" },
+                            fortuneTelling: {
+                                type: "OBJECT",
+                                properties: {
+                                    mbtiGuess: { type: "STRING" },
+                                    nameAnalysis: { type: "STRING" },
+                                    birthDateAstrology: { type: "STRING" }
+                                }
+                            }
+                        }
+                    }
+                },
+                required: ["candidate", "internal"]
+            };
+
+            const evalPrompt = \`
+以下の面接会話ログ、候補者情報（氏名：\${els.name.value}、生年月日：\${els.dob.value}）を分析し、JSONフォーマットで評価データを出力してください。
+求める人物像（主体性、自己研鑽、IT/金融への興味、コミュニケーション、挑戦心、逆境対応）に照らし合わせて厳密に評価すること。
+
+【会話ログ】
+\${transcript}
+\`;
+            
+            try {
+                const response = await fetch(\`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=\${apiKey}\`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: 'user', parts: [{ text: evalPrompt }] }],
+                        generationConfig: {
+                            temperature: 0.2,
+                            responseMimeType: "application/json",
+                            responseSchema: schema
+                        }
+                    })
+                });
+
+                if (!response.ok) throw new Error('Eval API Error');
+                const data = await response.json();
+                evaluationData = JSON.parse(data.candidates[0].content.parts[0].text);
+                
+                els.statusDot.classList.replace('bg-yellow-500', 'bg-blue-500');
+                els.statusText.textContent = '面接終了・評価完了';
+                
+                els.evalLoading.classList.add('hidden');
+                els.evalInterface.classList.remove('hidden');
+                renderEvaluation();
+
+            } catch (e) {
+                alert('評価の生成に失敗しました。');
+                els.evalLoading.classList.add('hidden');
+                els.chatInterface.classList.remove('hidden');
+            }
+        });
+
+        // --- 評価の描画 ---
+        function renderEvaluation() {
+            els.evalContentArea.innerHTML = '';
+            
+            if (currentTab === 'candidate') {
+                const d = evaluationData.candidate;
+                els.evalContentArea.innerHTML = \`
+                    <h3 class="text-xl font-bold text-blue-900 mb-6 pb-2 border-b">求職者様向け フィードバックレポート</h3>
+                    
+                    <div class="bg-blue-50 rounded-lg p-6 mb-6 text-center">
+                        <p class="text-gray-600 font-bold mb-2">対話・コミュニケーションスコア</p>
+                        <p class="text-4xl font-bold text-blue-600">\${d.communicationScore} <span class="text-xl text-gray-500">/ 100</span></p>
+                    </div>
+
+                    <div class="mb-6">
+                        <h4 class="font-bold text-green-700 flex items-center mb-3">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"></path></svg>
+                            良かった点（言葉遣い・受け答え）
+                        </h4>
+                        <div class="bg-white border border-gray-200 p-4 rounded shadow-sm">
+                            <p class="whitespace-pre-wrap">\${d.feedbackPositive}</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 class="font-bold text-orange-600 flex items-center mb-3">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            今後のアドバイス・改善点
+                        </h4>
+                        <div class="bg-white border border-gray-200 p-4 rounded shadow-sm">
+                            <p class="whitespace-pre-wrap">\${d.feedbackImprovement}</p>
+                        </div>
+                    </div>
+                \`;
+            } else {
+                const d = evaluationData.internal;
+                const f = d.fortuneTelling;
+                const strongHtml = d.strongPoints.map(s => \`<li class="mb-1 ml-4 list-disc">\${s}</li>\`).join('');
+                const weakHtml = d.weakPoints.map(s => \`<li class="mb-1 ml-4 list-disc">\${s}</li>\`).join('');
+
+                els.evalContentArea.innerHTML = \`
+                    <h3 class="text-xl font-bold text-gray-800 mb-6 pb-2 border-b">社内用 選考評価シート</h3>
+                    
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="bg-gray-100 rounded-lg p-4 text-center">
+                            <p class="text-gray-600 font-bold mb-1">自社マッチ度</p>
+                            <p class="text-3xl font-bold text-gray-800">\${d.matchScore} <span class="text-lg text-gray-500">/ 100</span></p>
+                        </div>
+                        <div class="bg-gray-100 rounded-lg p-4">
+                            <p class="text-gray-600 font-bold mb-1 text-center">録画データ</p>
+                            <button class="w-full h-full text-blue-600 underline text-sm hover:text-blue-800" onclick="alert('動画ダウンロード機能はデモ版ではモックアップです。')">
+                                面接動画(MP4)をダウンロード
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <h4 class="font-bold text-gray-700 bg-gray-200 p-2 rounded mb-2">1. 総合所見・印象</h4>
+                        <p class="text-sm bg-white p-3 border rounded">\${d.overallImpression}</p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <h4 class="font-bold text-blue-700 bg-blue-50 p-2 rounded mb-2">プラス評価</h4>
+                            <ul class="text-sm bg-white p-3 border rounded h-full">\${strongHtml}</ul>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-red-700 bg-red-50 p-2 rounded mb-2">懸念・マイナス評価</h4>
+                            <ul class="text-sm bg-white p-3 border rounded h-full">\${weakHtml}</ul>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 mb-6 text-sm">
+                        <div>
+                            <h4 class="font-bold text-gray-700 bg-gray-200 p-2 rounded mb-2">2. 今後の成長・ポテンシャル</h4>
+                            <p class="bg-white p-3 border rounded h-full">\${d.potentialAndGrowth}</p>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-gray-700 bg-gray-200 p-2 rounded mb-2">3. 定着可能性（長く働くか）</h4>
+                            <p class="bg-white p-3 border rounded h-full">\${d.retentionForecast}</p>
+                        </div>
+                    </div>
+
+                    <div class="mb-6 text-sm">
+                        <h4 class="font-bold text-gray-700 bg-gray-200 p-2 rounded mb-2">4. 表情・態度・身だしなみ分析</h4>
+                        <p class="bg-white p-3 border rounded">\${d.appearanceAnalysis}</p>
+                    </div>
+
+                    <div class="text-sm">
+                        <h4 class="font-bold text-purple-700 bg-purple-50 p-2 rounded mb-2 border-purple-200 border">5. 多角的性格・占い分析</h4>
+                        <div class="bg-white p-4 border border-purple-200 rounded grid grid-cols-1 gap-3">
+                            <div><span class="font-bold">MBTI予想:</span> \${f.mbtiGuess}</div>
+                            <div><span class="font-bold">姓名判断(\${els.name.value}):</span> \${f.nameAnalysis}</div>
+                            <div><span class="font-bold">生年月日占い(\${els.dob.value}):</span> \${f.birthDateAstrology}</div>
+                        </div>
+                    </div>
+                \`;
+            }
+        }
+
+        // --- タブ＆パスワード制御 ---
+        els.tabCandidate.addEventListener('click', () => {
+            currentTab = 'candidate';
+            els.tabCandidate.className = 'px-6 py-4 tab-active font-medium';
+            els.tabInternal.className = 'px-6 py-4 tab-inactive font-medium flex items-center hover:bg-gray-100';
+            renderEvaluation();
+        });
+
+        els.tabInternal.addEventListener('click', () => {
+            if (currentTab === 'internal') return;
+            els.pwdInput.value = '';
+            els.pwdModal.classList.remove('hidden');
+        });
+
+        els.cancelPwdBtn.addEventListener('click', () => els.pwdModal.classList.add('hidden'));
+        
+        els.submitPwdBtn.addEventListener('click', () => {
+            if (els.pwdInput.value === 'admin') {
+                els.pwdModal.classList.add('hidden');
+                currentTab = 'internal';
+                els.tabInternal.className = 'px-6 py-4 tab-active font-medium flex items-center text-red-600 border-red-600';
+                els.tabCandidate.className = 'px-6 py-4 tab-inactive font-medium hover:bg-gray-100';
+                renderEvaluation();
+            } else {
+                alert('パスワードが違います。');
+            }
+        });
+
+        // --- PDFダウンロード機能 ---
+        els.downloadPdfBtn.addEventListener('click', () => {
+            const element = els.evalContentArea;
+            const opt = {
+                margin:       10,
+                filename:     \`\${currentTab === 'candidate' ? '面接フィードバック' : '社内評価シート'}_\${els.name.value}様.pdf\`,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2 },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+            html2pdf().set(opt).from(element).save();
+        });
+
+    </script>
+</body>
+</html>
